@@ -1,72 +1,104 @@
-import { useEffect, useState } from 'react';
-import yorkie, { Document } from "yorkie-js-sdk";
-import './App.css';
-import reactLogo from './assets/react.svg';
-import viteLogo from '/vite.svg';
+import { useEffect, useState } from "react";
+import yorkie from "yorkie-js-sdk";
+import Cursor from "./Cursor";
+
+interface Presence {
+    cursor: {
+        xPos: number;
+        yPos: number;
+    };
+}
+
+interface Client {
+    clientID: string;
+    presence: Presence;
+}
 
 const API_ADDR = import.meta.env.VITE_YORKIE_API_ADDR;
 const API_KEY = import.meta.env.VITE_YORKIE_API_KEY;
 
+const client = new yorkie.Client(API_ADDR, { apiKey: API_KEY });
+const doc = new yorkie.Document('simultaneous-cursors', { enableDevtools: true });
+
 const App = (): JSX.Element => {
-  const [count, setCount] = useState(0);
-  const [doc, setDoc] = useState<Document<{ count: number } | null>>();
+    const [clients, setClients] = useState<Client[]>([]);
 
-  useEffect(() => {
-    const initializeYorkie = async () => {
-      const newClient = new yorkie.Client(API_ADDR, { apiKey: API_KEY });
-      await newClient.activate();
+    useEffect(() => {
+        const setup = async () => {
+            await client.activate();
 
-      const doc = new yorkie.Document<{ count: number }>('counter', { enableDevtools: true });
-      await newClient.attach(doc);
+            doc.subscribe('presence', () => {
+                setClients(doc.getPresences() as Client[]);
+            });
 
-      doc.update((root) => {
-        if (!root.count) {
-          root.count = 0;
-        } else {
-          setCount(doc.getRoot().count)
-        }
-      }, 'create default count if not exists');
+            await client.attach(doc, {
+                initialPresence: {
+                    cursor: {
+                        xPos: 0,
+                        yPos: 0,
+                    },
+                    pointerDown: false,
+                }
+            });
 
-      setDoc(doc)
-      doc.subscribe(() => {
-        setCount(doc.getRoot().count)
-      });
-    }
-    initializeYorkie();
-  }, []);
+            window.addEventListener('beforeunload', () => {
+                client.deactivate();
+            });
+        };
+        setup();
 
-  const handleIncrementCount = () => {
-    if (doc) {
-      doc.update((root) => {
-        root.count += 1;
-      });
-    }
-  };
+        const handlePointerUp = () => {
+            doc.update((root, presence) => {
+                presence.set({
+                    pointerDown: false,
+                });
+            });
+        };
+        const handlePointerDown = () => {
+            doc.update((root, presence) => {
+                presence.set({
+                    pointerDown: true,
+                });
+            });
+        };
+        const handlePointerMove = (event: MouseEvent) => {
+            doc.update((root, presence) => {
+                presence.set({
+                    cursor: {
+                        xPos: event.clientX,
+                        yPos: event.clientY,
+                    }
+                });
+            });
+        };
 
-  return (
-    <>
-      <div>
-        <a href="https://vitejs.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={handleIncrementCount}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
-}
+        window.addEventListener('mouseup', handlePointerUp);
+        window.addEventListener('mousedown', handlePointerDown);
+        window.addEventListener('mousemove', handlePointerMove);
+
+        return () => {
+            window.removeEventListener('mouseup', handlePointerUp);
+            window.removeEventListener('mousedown', handlePointerDown);
+            window.removeEventListener('mousemove', handlePointerMove);
+        };
+    }, []);
+
+    return (
+        <div className='general-container'>
+            {clients.map(({ clientID, presence: { cursor } }) => {
+                if (!cursor) {
+                    return null;
+                }
+                return (
+                    <Cursor
+                        x={cursor.xPos}
+                        y={cursor.yPos}
+                        key={clientID}
+                    />
+                );
+            })}
+        </div>
+    );
+};
 
 export default App;
